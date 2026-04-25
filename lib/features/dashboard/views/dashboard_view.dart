@@ -62,6 +62,10 @@ class DashboardView extends GetView<DashboardController> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _buildGreeting(),
+              const SizedBox(height: 24),
+              Obx(() => !controller.hasHealthAccess.value 
+                ? _buildPermissionWarning() 
+                : const SizedBox.shrink()),
               const SizedBox(height: 32),
               _buildSyncStatusCard(),
               const SizedBox(height: 32),
@@ -71,6 +75,8 @@ class DashboardView extends GetView<DashboardController> {
               _buildMainStats(),
               const SizedBox(height: 24),
               _buildOtherStats(),
+              const SizedBox(height: 24),
+              _buildCaloriesStat(),
             ],
           ),
         ),
@@ -86,6 +92,46 @@ class DashboardView extends GetView<DashboardController> {
         Text(controller.storage.getUserEmail().toString().replaceAll
           ('@gmail.com', ''), style: Get.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold)),
       ],
+    );
+  }
+
+  Widget _buildPermissionWarning() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.redAccent.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.redAccent.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  "Health data access is required to show your activity.",
+                  style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w500),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: TextButton(
+              onPressed: controller.requestHealthAccess,
+              style: TextButton.styleFrom(
+                backgroundColor: Colors.redAccent,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              child: const Text("Grant Access"),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -181,11 +227,53 @@ class DashboardView extends GetView<DashboardController> {
   Widget _buildOtherStats() {
     return Row(
       children: [
-        _buildSmallStatCard("Heart Rate", "72 bpm", Icons.favorite_rounded, Colors.redAccent),
+        Obx(() => _buildSmallStatCard(
+          "Heart Rate", 
+          "${controller.heartRate.value} bpm", 
+          Icons.favorite_rounded, 
+          Colors.redAccent
+        )),
         const SizedBox(width: 16),
-        _buildSmallStatCard("Sleep", "7h 20m", Icons.nightlight_rounded, Colors.indigoAccent),
+        Obx(() => _buildSmallStatCard(
+          "Sleep", 
+          "${controller.sleepHours.value}h", 
+          Icons.nightlight_rounded, 
+          Colors.indigoAccent
+        )),
       ],
     );
+  }
+
+  Widget _buildCaloriesStat() {
+    return Obx(() => Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.orange.withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.local_fire_department_rounded, color: Colors.orange, size: 24),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text("Calories Burned", style: TextStyle(color: Colors.black54, fontSize: 13)),
+                Text("${controller.calories.value} kcal", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ));
   }
 
   Widget _buildSmallStatCard(String title, String value, IconData icon, Color color) {

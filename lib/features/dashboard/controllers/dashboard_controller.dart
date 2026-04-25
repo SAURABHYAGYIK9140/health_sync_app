@@ -12,7 +12,11 @@ class DashboardController extends GetxController {
   final _dio = Get.find<DioClient>();
 
   final steps = 0.obs;
+  final heartRate = 0.obs;
+  final sleepHours = 0.0.obs;
+  final calories = 0.obs;
   final isSyncing = false.obs;
+  final hasHealthAccess = true.obs;
   final lastSync = Rxn<DateTime>();
 
   @override
@@ -35,22 +39,28 @@ class DashboardController extends GetxController {
     await fetchLatestData();
     final token = await storage.getToken();
 
-    debugPrint("Payload: $token");
+    // debugPrint("Payload: $token");
     _startBackgroundServiceSafe();
   }
 
+
   Future<void> _handleHealthPermissions() async {
     final hasPermission = await _healthService.hasPermissions();
+    hasHealthAccess.value = hasPermission;
 
     if (!hasPermission) {
-      // Use the unified request method in HealthService
-      final granted = await _healthService.requestPermissions();
-      if (!granted) {
-        debugPrint("Health permission denied by user");
-        return;
-      }
+      debugPrint("Health permission missing, waiting for user action...");
+    } else {
+      debugPrint("Health permissions confirmed");
     }
-    debugPrint("Health permissions confirmed");
+  }
+
+  Future<void> requestHealthAccess() async {
+    final granted = await _healthService.requestPermissions();
+    hasHealthAccess.value = granted;
+    if (granted) {
+      await fetchLatestData();
+    }
   }
 
   void _startBackgroundServiceSafe() async {
@@ -66,6 +76,9 @@ class DashboardController extends GetxController {
 
   Future<void> fetchLatestData() async {
     steps.value = await _healthService.getTodaySteps();
+    heartRate.value = await _healthService.getLatestHeartRate();
+    sleepHours.value = await _healthService.getTodaySleep();
+    calories.value = await _healthService.getTodayCalories();
   }
 
   Future<void> syncNow({bool isRetry = false}) async {
@@ -75,6 +88,16 @@ class DashboardController extends GetxController {
     debugPrint("Sync process started...");
 
     try {
+      // Step 1: Force a permission check before syncing
+      final hasPerm = await _healthService.hasPermissions();
+      if (!hasPerm) {
+         debugPrint("Health permissions not granted, attempting to request them");
+         final granted = await _healthService.requestPermissions();
+         if (!granted) {
+            throw Exception("Sync failed: Health permissions are required.");
+         }
+      }
+
       final payload = await _healthService.fetchLatestSyncPayload();
       
       if (payload != null) {
@@ -82,9 +105,17 @@ class DashboardController extends GetxController {
         if (userId == null) {
           throw Exception("User ID not found. Please log in again.");
         }
-        debugPrint("Sync payload: $payload");
+        final url = '${_dio.dio.options.baseUrl}submissions/$userId';
+        debugPrint("DEBUG MODE - SYNC START");
+        debugPrint("URL: $url");
+        debugPrint("PAYLOAD: $payload");
 
-        await _dio.dio.post('submissions/$userId', data: payload);
+        // Use a timeout to prevent the infinite loading spinner
+        final response = await _dio.dio.post('submissions/$userId', data: payload)
+            .timeout(const Duration(seconds: 20));
+
+        debugPrint("DEBUG MODE - SYNC SUCCESS");
+        debugPrint("RESPONSE: ${response.data}");
 
         final now = DateTime.parse(payload['payload']['timestamp']);
         await storage.saveLastSync(now);
@@ -97,29 +128,27 @@ class DashboardController extends GetxController {
           backgroundColor: AppTheme.accentColor,
           colorText: Colors.white);
       } else {
-        await storage.addSyncLog(true, "Sync checked: No new data.");
-        Get.snackbar("Info", "No new health data to sync",
+        await storage.addSyncLog(true, "Sync checked: No data found to upload.");
+        Get.snackbar("Info", "No data found to sync. Try recording some activity!",
           snackPosition: SnackPosition.BOTTOM);
       }
       
       await fetchLatestData();
       
     } catch (e) {
-      debugPrint("Sync failed: $e");
-      await storage.addSyncLog(false, "Sync failed: ${e.toString()}");
-      
-      if (!isRetry && e.toString().contains("Health permissions")) {
-         // If it's a permission error, try to request again
-         final granted = await _healthService.requestPermissions();
-         if (granted) {
-           return await syncNow(isRetry: true);
-         }
+      debugPrint("Sync Error: $e");
+      String errorMsg = e.toString();
+      if (e is Exception && e.toString().contains("timeout")) {
+        errorMsg = "Server connection timed out. Please try again later.";
       }
+      
+      await storage.addSyncLog(false, "Sync failed: $errorMsg");
 
-      Get.snackbar("Sync Error", e.toString(),
+      Get.snackbar("Sync Error", errorMsg.replaceAll("Exception:", ""),
         snackPosition: SnackPosition.BOTTOM,
         backgroundColor: Colors.redAccent,
-        colorText: Colors.white);
+        colorText: Colors.white,
+        duration: const Duration(seconds: 5));
     } finally {
       isSyncing.value = false;
     }
