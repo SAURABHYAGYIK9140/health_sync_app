@@ -70,6 +70,10 @@
 	<string>We need access to your health data to sync it with your doctor.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>We need access to your health data to sync it with your doctor.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Used only when you manually take photos of your meals or medical reports.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Used for voice notes and video attachments.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>
