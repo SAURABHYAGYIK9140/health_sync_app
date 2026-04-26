@@ -4,6 +4,7 @@ import 'package:health/health.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../core/storage/storage_service.dart';
+import 'location_service.dart';
 
 class HealthService extends GetxService {
   final Health _health = Health();
@@ -301,18 +302,13 @@ class HealthService extends GetxService {
 
         if (weekClean.isEmpty) {
           debugPrint(
-            '[HealthService] No health data found in both 24h and 7d ranges. Injecting mock data for testing.',
+            '[HealthService] No health data found in both 24h and 7d ranges.',
           );
-          // Injecting mock data so that API can be tested even on emulator without health data
           cleanData = [];
         } else {
           cleanData = weekClean;
         }
       }
-
-      debugPrint(
-        '[HealthService] Step 5 - Building payload with ${cleanData.length} records',
-      );
 
       // Step 5: Transform raw data points into JSON format
       final List<Map<String, dynamic>> dataPoints = cleanData.map((p) {
@@ -336,30 +332,37 @@ class HealthService extends GetxService {
           'source_id': p.sourceId,
           'source_name': p.sourceName,
         };
-      }).toList();
+       }).toList();
 
-      // If no data points, add a mock data point for testing
-      if (dataPoints.isEmpty) {
-        dataPoints.add({
-          'type': 'STEPS',
-          'value': 1000,
-          'unit': 'COUNT',
-          'from': now.subtract(const Duration(hours: 1)).toIso8601String(),
-          'to': now.toIso8601String(),
-          'source_id': 'mock_source',
-          'source_name': 'Mock Data (Emulator)',
-        });
-      }
+       debugPrint(
+         '[HealthService] Step 5 - Building payload with ${dataPoints.length} data points',
+       );
 
-      final rdata = {
-        "type": "health_data_upload",
-        "device_id": deviceId,
-        "payload": {
-          "records_count": dataPoints.length,
-          "timestamp": now.toIso8601String(),
-          "health_data": dataPoints,
-        },
-      };
+       // Step 6: Fetch current metrics (BPM, Calories, Location)
+       final latestBpm = await getLatestHeartRate();
+       final todayCalories = await getTodayCalories();
+       final locationService = Get.find<LocationService>();
+       final location = await locationService.getCurrentLocation();
+
+       debugPrint(
+         '❤️ [SyncPayload] BPM: $latestBpm, 🔥 Calories: $todayCalories, 📍 Location: ${location ?? "unavailable"}',
+       );
+
+       final rdata = {
+         "type": "health_data_upload",
+         "device_id": deviceId,
+         "payload": {
+           "records_count": dataPoints.length,
+           "timestamp": now.toIso8601String(),
+           "health_data": dataPoints,
+           "summary": {
+             "heart_rate_bpm": latestBpm,
+             "calories_burned": todayCalories,
+             "latitude": location?['latitude'],
+             "longitude": location?['longitude'],
+           },
+         },
+       };
 
       debugPrint(
         '[HealthService] Step 5 - rdata created successfully with ${dataPoints.length} data points',
@@ -373,190 +376,209 @@ class HealthService extends GetxService {
     }
   }
 
-  /// Get today's steps with permission verification
-  Future<int> getTodaySteps() async {
-    final now = DateTime.now();
-    final midnight = DateTime(now.year, now.month, now.day);
-    final yesterday = now.subtract(const Duration(hours: 24));
+   /// Get today's steps with permission verification
+   Future<int> getTodaySteps() async {
+     final now = DateTime.now();
+     final midnight = DateTime(now.year, now.month, now.day);
+     final yesterday = now.subtract(const Duration(hours: 24));
 
-    // Defensive: Ensure time order
-    if (!midnight.isBefore(now)) {
-      debugPrint(
-        "[HealthService] Invalid time range: midnight >= now. Returning 0 steps.",
-      );
-      return 0;
-    }
-    if (!yesterday.isBefore(now)) {
-      debugPrint(
-        "[HealthService] Invalid time range: yesterday >= now. Returning 0 steps.",
-      );
-      return 0;
-    }
+     // Defensive: Ensure time order
+     if (!midnight.isBefore(now)) {
+       debugPrint(
+         "🚶 [Steps] Invalid time range: midnight >= now. Returning 0 steps.",
+       );
+       return 0;
+     }
+     if (!yesterday.isBefore(now)) {
+       debugPrint(
+         "🚶 [Steps] Invalid time range: yesterday >= now. Returning 0 steps.",
+       );
+       return 0;
+     }
 
-    try {
-      // Skip unreliable hasPermissions() — just try to read data directly.
-      // Try aggregate first (standard)
-      int? steps;
-      if (midnight.isBefore(now)) {
-        steps = await _health.getTotalStepsInInterval(midnight, now);
-      }
-      // Fallback: If 0, try the last 24 hours (sometimes midnight boundary is tricky)
-      if ((steps == null || steps == 0) && yesterday.isBefore(now)) {
-        steps = await _health.getTotalStepsInInterval(yesterday, now);
-        debugPrint("Steps check (Last 24h): $steps");
-      }
-      // Secondary Fallback: Fetch raw data points
-      if ((steps == null || steps == 0) && yesterday.isBefore(now)) {
-        final data = await _health.getHealthDataFromTypes(
-          startTime: yesterday,
-          endTime: now,
-          types: [HealthDataType.STEPS],
-        );
-        for (var p in data) {
-          steps =
-              (steps ?? 0) +
-              (p.value as NumericHealthValue).numericValue.toInt();
-        }
-      }
-      return steps ?? 0;
-    } catch (e) {
-      debugPrint("getTodaySteps failed: $e");
-      return 0;
-    }
-  }
+     try {
+       // Skip unreliable hasPermissions() — just try to read data directly.
+       // Try aggregate first (standard)
+       int? steps;
+       if (midnight.isBefore(now)) {
+         steps = await _health.getTotalStepsInInterval(midnight, now);
+       }
+       // Fallback: If 0, try the last 24 hours (sometimes midnight boundary is tricky)
+       if ((steps == null || steps == 0) && yesterday.isBefore(now)) {
+         steps = await _health.getTotalStepsInInterval(yesterday, now);
+         debugPrint("🚶 [Steps] Fallback check (Last 24h): $steps");
+       }
+       // Secondary Fallback: Fetch raw data points
+       if ((steps == null || steps == 0) && yesterday.isBefore(now)) {
+         final data = await _health.getHealthDataFromTypes(
+           startTime: yesterday,
+           endTime: now,
+           types: [HealthDataType.STEPS],
+         );
+         debugPrint("🚶 [Steps] Found ${data.length} step records in last 24h");
+         for (var p in data) {
+           steps =
+               (steps ?? 0) +
+               (p.value as NumericHealthValue).numericValue.toInt();
+         }
+       }
+       final finalSteps = steps ?? 0;
+       debugPrint("🚶 [Steps] Today's total: $finalSteps");
+       return finalSteps;
+     } catch (e) {
+       debugPrint("❌ [Steps] Error: $e");
+       return 0;
+     }
+   }
 
-  /// Get latest heart rate
-  Future<int> getLatestHeartRate() async {
-    final now = DateTime.now();
-    final past = now.subtract(
-      const Duration(days: 7),
-    ); // Look back 7 days for latest
+   /// Get latest heart rate
+   Future<int> getLatestHeartRate() async {
+     final now = DateTime.now();
+     final past = now.subtract(
+       const Duration(days: 7),
+     ); // Look back 7 days for latest
 
-    try {
-      // Skip unreliable hasPermissions() — just try to read data directly.
-      final data = await _health.getHealthDataFromTypes(
-        startTime: past,
-        endTime: now,
-        types: [HealthDataType.HEART_RATE],
-      );
+     try {
+       // Skip unreliable hasPermissions() — just try to read data directly.
+       final data = await _health.getHealthDataFromTypes(
+         startTime: past,
+         endTime: now,
+         types: [HealthDataType.HEART_RATE],
+       );
 
-      debugPrint(
-        "DEBUG: Found ${data.length} heart rate points in last 7 days",
-      );
+       debugPrint(
+         "❤️ [HeartRate] Found ${data.length} BPM readings in last 7 days",
+       );
 
-      if (data.isEmpty) return 0;
+       if (data.isEmpty) {
+         debugPrint("❤️ [HeartRate] No BPM data found. Recording device not detected or no permission to read.");
+         return 0;
+       }
 
-      // Get the most recent one
-      data.sort((a, b) => b.dateFrom.compareTo(a.dateFrom));
-      return (data.first.value as NumericHealthValue).numericValue.toInt();
-    } catch (e) {
-      debugPrint("getLatestHeartRate failed: $e");
-      return 0;
-    }
-  }
+       // Get the most recent one
+       data.sort((a, b) => b.dateFrom.compareTo(a.dateFrom));
+       final latestBpm = (data.first.value as NumericHealthValue).numericValue.toInt();
+       final timestamp = data.first.dateFrom;
+       debugPrint("❤️ [HeartRate] Latest BPM: $latestBpm (recorded: $timestamp)");
+       return latestBpm;
+     } catch (e) {
+       debugPrint("❌ [HeartRate] Error fetching BPM: $e");
+       return 0;
+     }
+   }
 
-  /// Get today's sleep duration in hours
-  Future<double> getTodaySleep() async {
-    final now = DateTime.now();
-    final past = now.subtract(const Duration(days: 7)); // Look back 7 days
+   /// Get today's sleep duration in hours
+   Future<double> getTodaySleep() async {
+     final now = DateTime.now();
+     final past = now.subtract(const Duration(days: 7)); // Look back 7 days
 
-    try {
-      // Skip unreliable hasPermissions() — just try to read data directly.
-      final data = await _health.getHealthDataFromTypes(
-        startTime: past,
-        endTime: now,
-        types: [HealthDataType.SLEEP_SESSION],
-      );
+     try {
+       // Skip unreliable hasPermissions() — just try to read data directly.
+       final data = await _health.getHealthDataFromTypes(
+         startTime: past,
+         endTime: now,
+         types: [HealthDataType.SLEEP_SESSION],
+       );
 
-      debugPrint("DEBUG: Found ${data.length} sleep sessions in last 7 days");
-      if (data.isEmpty) return 0.0;
+       debugPrint("🛏️ [Sleep] Found ${data.length} sleep sessions in last 7 days");
+       if (data.isEmpty) {
+         debugPrint("🛏️ [Sleep] No sleep data. Ensure you have recorded sleep sessions.");
+         return 0.0;
+       }
 
-      // Get sessions from today (last 24h)
-      final todayLimit = DateTime.now().subtract(const Duration(hours: 24));
-      double sleepHours = 0;
-      for (var p in data) {
-        if (p.dateFrom.isAfter(todayLimit)) {
-          sleepHours += p.dateTo.difference(p.dateFrom).inMinutes / 60.0;
-        }
-      }
+       // Get sessions from today (last 24h)
+       final todayLimit = DateTime.now().subtract(const Duration(hours: 24));
+       double sleepHours = 0;
+       for (var p in data) {
+         if (p.dateFrom.isAfter(todayLimit)) {
+           sleepHours += p.dateTo.difference(p.dateFrom).inMinutes / 60.0;
+         }
+       }
 
-      // If no sleep today, show the last session duration
-      if (sleepHours == 0 && data.isNotEmpty) {
-        data.sort((a, b) => b.dateFrom.compareTo(a.dateFrom));
-        sleepHours =
-            data.first.dateTo.difference(data.first.dateFrom).inMinutes / 60.0;
-      }
+       // If no sleep today, show the last session duration
+       if (sleepHours == 0 && data.isNotEmpty) {
+         data.sort((a, b) => b.dateFrom.compareTo(a.dateFrom));
+         sleepHours =
+             data.first.dateTo.difference(data.first.dateFrom).inMinutes / 60.0;
+         debugPrint("🛏️ [Sleep] No sleep today, showing latest session: ${sleepHours.toStringAsFixed(1)}h");
+       } else {
+         debugPrint("🛏️ [Sleep] Today's sleep: ${sleepHours.toStringAsFixed(1)}h");
+       }
 
-      return double.parse(sleepHours.toStringAsFixed(1));
-    } catch (e) {
-      debugPrint("getTodaySleep failed: $e");
-      return 0.0;
-    }
-  }
+       return double.parse(sleepHours.toStringAsFixed(1));
+     } catch (e) {
+       debugPrint("❌ [Sleep] Error: $e");
+       return 0.0;
+     }
+   }
 
-  /// Get today's calories burned
-  Future<int> getTodayCalories() async {
-    final now = DateTime.now();
-    final midnight = DateTime(now.year, now.month, now.day);
-    final yesterday = now.subtract(const Duration(hours: 24));
+   /// Get today's calories burned
+   Future<int> getTodayCalories() async {
+     final now = DateTime.now();
+     final midnight = DateTime(now.year, now.month, now.day);
+     final yesterday = now.subtract(const Duration(hours: 24));
 
-    try {
-      // Skip unreliable hasPermissions() — just try to read data directly.
-      double calories = 0;
+     try {
+       // Skip unreliable hasPermissions() — just try to read data directly.
+       double calories = 0;
 
-      // Try ACTIVE_ENERGY_BURNED from midnight first
-      final data = await _health.getHealthDataFromTypes(
-        startTime: midnight,
-        endTime: now,
-        types: [HealthDataType.ACTIVE_ENERGY_BURNED],
-      );
-      for (var p in data) {
-        calories += (p.value as NumericHealthValue).numericValue.toDouble();
-      }
-      debugPrint(
-        "DEBUG: Found ${data.length} calorie records today (midnight), total=$calories",
-      );
+       // Try ACTIVE_ENERGY_BURNED from midnight first
+       final data = await _health.getHealthDataFromTypes(
+         startTime: midnight,
+         endTime: now,
+         types: [HealthDataType.ACTIVE_ENERGY_BURNED],
+       );
+       for (var p in data) {
+         calories += (p.value as NumericHealthValue).numericValue.toDouble();
+       }
+       debugPrint(
+         "🔥 [Calories] Found ${data.length} ACTIVE_ENERGY records today, total=${calories.round()}",
+       );
 
-      // Fallback: try last 24h if midnight range returned nothing
-      if (calories == 0) {
-        final data24h = await _health.getHealthDataFromTypes(
-          startTime: yesterday,
-          endTime: now,
-          types: [HealthDataType.ACTIVE_ENERGY_BURNED],
-        );
-        for (var p in data24h) {
-          calories += (p.value as NumericHealthValue).numericValue.toDouble();
-        }
-        debugPrint(
-          "DEBUG: Found ${data24h.length} calorie records (24h fallback), total=$calories",
-        );
-      }
+       // Fallback: try last 24h if midnight range returned nothing
+       if (calories == 0) {
+         final data24h = await _health.getHealthDataFromTypes(
+           startTime: yesterday,
+           endTime: now,
+           types: [HealthDataType.ACTIVE_ENERGY_BURNED],
+         );
+         for (var p in data24h) {
+           calories += (p.value as NumericHealthValue).numericValue.toDouble();
+         }
+         debugPrint(
+           "🔥 [Calories] 24h fallback: Found ${data24h.length} records, total=${calories.round()}",
+         );
+       }
 
-      // Secondary fallback: try BASAL_ENERGY_BURNED (some devices use this)
-      if (calories == 0) {
-        try {
-          final basalData = await _health.getHealthDataFromTypes(
-            startTime: yesterday,
-            endTime: now,
-            types: [HealthDataType.BASAL_ENERGY_BURNED],
-          );
-          for (var p in basalData) {
-            calories += (p.value as NumericHealthValue).numericValue.toDouble();
-          }
-          debugPrint(
-            "DEBUG: Found ${basalData.length} basal calorie records, total=$calories",
-          );
-        } catch (e) {
-          debugPrint("BASAL_ENERGY_BURNED fetch failed (not critical): $e");
-        }
-      }
+       // Secondary fallback: try BASAL_ENERGY_BURNED (some devices use this)
+       if (calories == 0) {
+         try {
+           final basalData = await _health.getHealthDataFromTypes(
+             startTime: yesterday,
+             endTime: now,
+             types: [HealthDataType.BASAL_ENERGY_BURNED],
+           );
+           for (var p in basalData) {
+             calories += (p.value as NumericHealthValue).numericValue.toDouble();
+           }
+           debugPrint(
+             "🔥 [Calories] Found ${basalData.length} BASAL_ENERGY records, total=${calories.round()}",
+           );
+         } catch (e) {
+           debugPrint("⚠️ [Calories] BASAL_ENERGY fetch failed (optional): $e");
+         }
+       }
 
-      return calories.round();
-    } catch (e) {
-      debugPrint("getTodayCalories failed: $e");
-      return 0;
-    }
-  }
+       if (calories == 0) {
+         debugPrint("🔥 [Calories] No calorie data found. Ensure your device records activity.");
+       }
+
+       return calories.round();
+     } catch (e) {
+       debugPrint("❌ [Calories] Error: $e");
+       return 0;
+     }
+   }
 
   /// Open Health Connect app or store
   Future<void> openHealthConnectApp() async {

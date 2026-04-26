@@ -199,23 +199,7 @@ class DashboardController extends GetxController with WidgetsBindingObserver {
       debugPrint("[Dashboard] Calories fetch failed: $e");
     }
 
-    // Apply mock fallback per-metric when no real data is available (emulator/no sensors)
-    if (steps.value == 0) {
-      debugPrint("[Dashboard] Steps is 0 — applying mock value");
-      steps.value = 1000;
-    }
-    if (heartRate.value == 0) {
-      debugPrint("[Dashboard] Heart rate is 0 — applying mock value");
-      heartRate.value = 72;
-    }
-    if (sleepHours.value == 0.0) {
-      debugPrint("[Dashboard] Sleep is 0 — applying mock value");
-      sleepHours.value = 7.5;
-    }
-    if (calories.value == 0) {
-      debugPrint("[Dashboard] Calories is 0 — applying mock value");
-      calories.value = 350;
-    }
+    // Show only real data - no mock fallback values
   }
 
   Future<void> syncNow({bool isRetry = false}) async {

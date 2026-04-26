@@ -17,6 +17,7 @@ import 'core/storage/storage_service.dart';
 import 'core/network/dio_client.dart';
 import 'core/controllers/lifecycle_controller.dart';
 import 'services/health_service.dart';
+import 'services/location_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -26,6 +27,7 @@ void main() async {
   await Get.putAsync(() => DioClient().init());
   Get.put(AuthService());
   Get.put(HealthService());
+  Get.put(LocationService());
   Get.put(SubmissionsService());
   Get.put(LifecycleController());
 

@@ -78,6 +78,8 @@
 	<string>We need access to your motion and fitness data to track your steps and physical activity.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>We need your location to provide location-based health insights.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>We need your location to provide location-based health insights.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

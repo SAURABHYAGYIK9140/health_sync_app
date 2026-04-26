@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:ui';
+import 'dart:convert';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:get_storage/get_storage.dart';
 import 'health_service.dart';
+import 'location_service.dart';
 
 @pragma('vm:entry-point')
 class BackgroundSyncService {
@@ -15,14 +17,14 @@ class BackgroundSyncService {
     await service.configure(
       androidConfiguration: AndroidConfiguration(
         onStart: onStart,
-        autoStart: false,
-        isForegroundMode: false,
+        autoStart: true,
+        isForegroundMode: true,
         notificationChannelId: 'health_sync_channel',
         initialNotificationTitle: 'Health Sync',
         initialNotificationContent: 'Syncing health data...',
       ),
       iosConfiguration: IosConfiguration(
-        autoStart: false,
+        autoStart: true,
         onForeground: onStart,
         onBackground: onIosBackground,
       ),
@@ -90,12 +92,9 @@ class BackgroundSyncService {
       }
 
       final storage = GetStorage();
-      final userId = storage.read('user_id') as String?;
 
-      if (userId == null) {
-        _addLog("Background sync skipped: No user ID", false);
-        return;
-      }
+      
+      final deviceId = storage.read('device_id') as String?;
 
       // Check if 24 hours have passed since last sync
       final lastSyncStr = storage.read('last_sync_time');
@@ -123,16 +122,29 @@ class BackgroundSyncService {
       final payload = await healthService.fetchLatestSyncPayload();
       
       if (payload != null) {
+        final formData = FormData.fromMap({
+          'type': payload['type'] ?? 'health_data_upload',
+          'device_id': deviceId ?? '',
+          'payload': jsonEncode(payload['payload'] ?? {}),
+          'file': MultipartFile.fromString(
+            jsonEncode(payload),
+            filename: 'health_data_${DateTime.now().millisecondsSinceEpoch}.json',
+          ),
+        });
+
         final dio = Dio(BaseOptions(
           baseUrl: 'https://orishub.com/api/',
           headers: {
             'Authorization': 'Bearer $token',
             'Accept': 'application/json',
-            'Content-Type': 'application/json',
           },
         ));
         
-        await dio.post('submissions/$userId', data: payload);
+        await dio.post('submissions', data: formData, options: Options(contentType: 'multipart/form-data'));
+        
+        // Update last sync time so we wait another 24 hours
+        storage.write('last_sync_time', DateTime.now().toIso8601String());
+        
         _addLog("Background sync successful", true);
 
         if (service is AndroidServiceInstance) {
