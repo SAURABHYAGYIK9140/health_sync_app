@@ -13,7 +13,8 @@ A production-grade cross-platform mobile application (Android & iOS) for secure 
 ### 📱 **Health Data Integration**
 - **Android**: Health Connect integration
 - **iOS**: Apple HealthKit integration
-- Track: Steps, Heart Rate, Sleep, Calories Burned
+- Track: Steps, Heart Rate (30-day history), Sleep (30-day history), Calories (30-day history)
+- Monthly aggregated statistics
 - Incremental data synchronization (only new data)
 
 ### 🔄 **Data Synchronization**
@@ -52,19 +53,34 @@ Response:
 
 ### Health Data Submission
 ```
-POST /api/submissions/{user_id}
+POST /api/submissions
 Authorization: Bearer {access_token}
-Content-Type: application/json
+Content-Type: multipart/form-data
 
 {
-  "type": "health_sync",
+  "type": "health_data_upload",
   "device_id": "...",
   "payload": {
-    "steps": 8234,
-    "heart_rate": 72,
-    "sleep_hours": 7.5,
-    "calories": 520,
-    "timestamp": "2026-04-25T15:30:00.000Z"
+    "records_count": 150,
+    "timestamp": "2026-04-26T15:30:00.000Z",
+    "health_data": [
+      {
+        "type": "STEPS",
+        "value": 8234,
+        "unit": "COUNT",
+        "from": "...",
+        "to": "...",
+        "source_id": "com.google.android.apps.fitness",
+        "source_name": "Google Fit"
+      },
+      ...
+    ],
+    "summary": {
+      "heart_rate_bpm": 72,           // Latest BPM from last 30 days
+      "calories_burned": 2450,        // Total calories from last 30 days
+      "latitude": 40.7128,            // Current location
+      "longitude": -74.0060           // Current location
+    }
   }
 }
 ```

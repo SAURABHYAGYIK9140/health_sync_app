@@ -431,156 +431,272 @@ class HealthService extends GetxService {
      }
    }
 
-   /// Get latest heart rate
-   Future<int> getLatestHeartRate() async {
-     final now = DateTime.now();
-     final past = now.subtract(
-       const Duration(days: 7),
-     ); // Look back 7 days for latest
+    /// Get latest heart rate (last 30 days)
+    /// Returns the most recent BPM reading from the last month
+    Future<int> getLatestHeartRate() async {
+      final now = DateTime.now();
+      final thirtyDaysAgo = now.subtract(
+        const Duration(days: 30),
+      ); // Look back 30 days for latest
 
-     try {
-       // Skip unreliable hasPermissions() — just try to read data directly.
-       final data = await _health.getHealthDataFromTypes(
-         startTime: past,
-         endTime: now,
-         types: [HealthDataType.HEART_RATE],
-       );
+      try {
+        // Skip unreliable hasPermissions() — just try to read data directly.
+        final data = await _health.getHealthDataFromTypes(
+          startTime: thirtyDaysAgo,
+          endTime: now,
+          types: [HealthDataType.HEART_RATE],
+        );
 
-       debugPrint(
-         "❤️ [HeartRate] Found ${data.length} BPM readings in last 7 days",
-       );
+        debugPrint(
+          "❤️ [HeartRate] Found ${data.length} BPM readings in last 30 days",
+        );
 
-       if (data.isEmpty) {
-         debugPrint("❤️ [HeartRate] No BPM data found. Recording device not detected or no permission to read.");
-         return 0;
-       }
+        if (data.isEmpty) {
+          debugPrint("❤️ [HeartRate] No BPM data found in last 30 days. Recording device not detected or no permission to read.");
+          return 0;
+        }
 
-       // Get the most recent one
-       data.sort((a, b) => b.dateFrom.compareTo(a.dateFrom));
-       final latestBpm = (data.first.value as NumericHealthValue).numericValue.toInt();
-       final timestamp = data.first.dateFrom;
-       debugPrint("❤️ [HeartRate] Latest BPM: $latestBpm (recorded: $timestamp)");
-       return latestBpm;
-     } catch (e) {
-       debugPrint("❌ [HeartRate] Error fetching BPM: $e");
-       return 0;
-     }
-   }
+        // Get the most recent one
+        data.sort((a, b) => b.dateFrom.compareTo(a.dateFrom));
+        final latestBpm = (data.first.value as NumericHealthValue).numericValue.toInt();
+        final timestamp = data.first.dateFrom;
+        debugPrint("❤️ [HeartRate] Latest BPM: $latestBpm (recorded: $timestamp)");
+        return latestBpm;
+      } catch (e) {
+        debugPrint("❌ [HeartRate] Error fetching BPM: $e");
+        return 0;
+      }
+    }
 
-   /// Get today's sleep duration in hours
-   Future<double> getTodaySleep() async {
-     final now = DateTime.now();
-     final past = now.subtract(const Duration(days: 7)); // Look back 7 days
+    /// Get sleep data from last 30 days
+    /// Returns total sleep hours from the month
+    /// If no sleep in last 24h, shows the latest sleep session from the month
+    Future<double> getTodaySleep() async {
+      final now = DateTime.now();
+      final thirtyDaysAgo = now.subtract(const Duration(days: 30)); // Look back 30 days
 
-     try {
-       // Skip unreliable hasPermissions() — just try to read data directly.
-       final data = await _health.getHealthDataFromTypes(
-         startTime: past,
-         endTime: now,
-         types: [HealthDataType.SLEEP_SESSION],
-       );
+      try {
+        // Skip unreliable hasPermissions() — just try to read data directly.
+        final data = await _health.getHealthDataFromTypes(
+          startTime: thirtyDaysAgo,
+          endTime: now,
+          types: [HealthDataType.SLEEP_SESSION],
+        );
 
-       debugPrint("🛏️ [Sleep] Found ${data.length} sleep sessions in last 7 days");
-       if (data.isEmpty) {
-         debugPrint("🛏️ [Sleep] No sleep data. Ensure you have recorded sleep sessions.");
-         return 0.0;
-       }
+        debugPrint("🛏️ [Sleep] Found ${data.length} sleep sessions in last 30 days");
+        if (data.isEmpty) {
+          debugPrint("🛏️ [Sleep] No sleep data in last 30 days. Enable sleep tracking on your device.");
+          return 0.0;
+        }
 
-       // Get sessions from today (last 24h)
-       final todayLimit = DateTime.now().subtract(const Duration(hours: 24));
-       double sleepHours = 0;
-       for (var p in data) {
-         if (p.dateFrom.isAfter(todayLimit)) {
-           sleepHours += p.dateTo.difference(p.dateFrom).inMinutes / 60.0;
-         }
-       }
+        // Get sessions from today (last 24h)
+        final todayLimit = DateTime.now().subtract(const Duration(hours: 24));
+        double sleepHours = 0;
+        for (var p in data) {
+          if (p.dateFrom.isAfter(todayLimit)) {
+            sleepHours += p.dateTo.difference(p.dateFrom).inMinutes / 60.0;
+          }
+        }
 
-       // If no sleep today, show the last session duration
-       if (sleepHours == 0 && data.isNotEmpty) {
-         data.sort((a, b) => b.dateFrom.compareTo(a.dateFrom));
-         sleepHours =
-             data.first.dateTo.difference(data.first.dateFrom).inMinutes / 60.0;
-         debugPrint("🛏️ [Sleep] No sleep today, showing latest session: ${sleepHours.toStringAsFixed(1)}h");
-       } else {
-         debugPrint("🛏️ [Sleep] Today's sleep: ${sleepHours.toStringAsFixed(1)}h");
-       }
+        // If no sleep today, show the last session from the month
+        if (sleepHours == 0 && data.isNotEmpty) {
+          data.sort((a, b) => b.dateFrom.compareTo(a.dateFrom));
+          sleepHours =
+              data.first.dateTo.difference(data.first.dateFrom).inMinutes / 60.0;
+          final lastSleepDate = data.first.dateFrom.toLocal().toString().split(' ')[0];
+          debugPrint("🛏️ [Sleep] No sleep today, showing latest from month: ${sleepHours.toStringAsFixed(1)}h on $lastSleepDate");
+        } else {
+          debugPrint("🛏️ [Sleep] Today's sleep: ${sleepHours.toStringAsFixed(1)}h");
+        }
 
-       return double.parse(sleepHours.toStringAsFixed(1));
-     } catch (e) {
-       debugPrint("❌ [Sleep] Error: $e");
-       return 0.0;
-     }
-   }
+        return double.parse(sleepHours.toStringAsFixed(1));
+      } catch (e) {
+        debugPrint("❌ [Sleep] Error: $e");
+        return 0.0;
+      }
+    }
 
-   /// Get today's calories burned
-   Future<int> getTodayCalories() async {
-     final now = DateTime.now();
-     final midnight = DateTime(now.year, now.month, now.day);
-     final yesterday = now.subtract(const Duration(hours: 24));
+    /// Get today's calories burned
+    /// Checks last 30 days of activity
+    Future<int> getTodayCalories() async {
+      final now = DateTime.now();
+      final midnight = DateTime(now.year, now.month, now.day);
+      final thirtyDaysAgo = now.subtract(const Duration(days: 30));
 
-     try {
-       // Skip unreliable hasPermissions() — just try to read data directly.
-       double calories = 0;
+      try {
+        // Skip unreliable hasPermissions() — just try to read data directly.
+        double calories = 0;
 
-       // Try ACTIVE_ENERGY_BURNED from midnight first
-       final data = await _health.getHealthDataFromTypes(
-         startTime: midnight,
-         endTime: now,
-         types: [HealthDataType.ACTIVE_ENERGY_BURNED],
-       );
-       for (var p in data) {
-         calories += (p.value as NumericHealthValue).numericValue.toDouble();
-       }
-       debugPrint(
-         "🔥 [Calories] Found ${data.length} ACTIVE_ENERGY records today, total=${calories.round()}",
-       );
+        // Try ACTIVE_ENERGY_BURNED from midnight first
+        final data = await _health.getHealthDataFromTypes(
+          startTime: midnight,
+          endTime: now,
+          types: [HealthDataType.ACTIVE_ENERGY_BURNED],
+        );
+        for (var p in data) {
+          calories += (p.value as NumericHealthValue).numericValue.toDouble();
+        }
+        debugPrint(
+          "🔥 [Calories] Found ${data.length} ACTIVE_ENERGY records today, total=${calories.round()}",
+        );
 
-       // Fallback: try last 24h if midnight range returned nothing
-       if (calories == 0) {
-         final data24h = await _health.getHealthDataFromTypes(
-           startTime: yesterday,
-           endTime: now,
-           types: [HealthDataType.ACTIVE_ENERGY_BURNED],
-         );
-         for (var p in data24h) {
-           calories += (p.value as NumericHealthValue).numericValue.toDouble();
-         }
-         debugPrint(
-           "🔥 [Calories] 24h fallback: Found ${data24h.length} records, total=${calories.round()}",
-         );
-       }
+        // Fallback: try last 24h if midnight range returned nothing
+        if (calories == 0) {
+          final yesterday = now.subtract(const Duration(hours: 24));
+          final data24h = await _health.getHealthDataFromTypes(
+            startTime: yesterday,
+            endTime: now,
+            types: [HealthDataType.ACTIVE_ENERGY_BURNED],
+          );
+          for (var p in data24h) {
+            calories += (p.value as NumericHealthValue).numericValue.toDouble();
+          }
+          debugPrint(
+            "🔥 [Calories] 24h fallback: Found ${data24h.length} records, total=${calories.round()}",
+          );
+        }
 
-       // Secondary fallback: try BASAL_ENERGY_BURNED (some devices use this)
-       if (calories == 0) {
-         try {
-           final basalData = await _health.getHealthDataFromTypes(
-             startTime: yesterday,
-             endTime: now,
-             types: [HealthDataType.BASAL_ENERGY_BURNED],
-           );
-           for (var p in basalData) {
-             calories += (p.value as NumericHealthValue).numericValue.toDouble();
-           }
-           debugPrint(
-             "🔥 [Calories] Found ${basalData.length} BASAL_ENERGY records, total=${calories.round()}",
-           );
-         } catch (e) {
-           debugPrint("⚠️ [Calories] BASAL_ENERGY fetch failed (optional): $e");
-         }
-       }
+        // Secondary fallback: try last 30 days if still 0
+        if (calories == 0) {
+          try {
+            final data30d = await _health.getHealthDataFromTypes(
+              startTime: thirtyDaysAgo,
+              endTime: now,
+              types: [HealthDataType.ACTIVE_ENERGY_BURNED],
+            );
+            for (var p in data30d) {
+              calories += (p.value as NumericHealthValue).numericValue.toDouble();
+            }
+            debugPrint(
+              "🔥 [Calories] 30-day fallback: Found ${data30d.length} ACTIVE_ENERGY records, total=${calories.round()}",
+            );
+          } catch (e) {
+            debugPrint("⚠️ [Calories] 30-day fallback failed: $e");
+          }
+        }
 
-       if (calories == 0) {
-         debugPrint("🔥 [Calories] No calorie data found. Ensure your device records activity.");
-       }
+        // Tertiary fallback: try BASAL_ENERGY_BURNED (some devices use this)
+        if (calories == 0) {
+          try {
+            final basalData = await _health.getHealthDataFromTypes(
+              startTime: thirtyDaysAgo,
+              endTime: now,
+              types: [HealthDataType.BASAL_ENERGY_BURNED],
+            );
+            for (var p in basalData) {
+              calories += (p.value as NumericHealthValue).numericValue.toDouble();
+            }
+            debugPrint(
+              "🔥 [Calories] Found ${basalData.length} BASAL_ENERGY records (30d), total=${calories.round()}",
+            );
+          } catch (e) {
+            debugPrint("⚠️ [Calories] BASAL_ENERGY fetch failed (optional): $e");
+          }
+        }
 
-       return calories.round();
-     } catch (e) {
-       debugPrint("❌ [Calories] Error: $e");
-       return 0;
-     }
-   }
+        if (calories == 0) {
+          debugPrint("🔥 [Calories] No calorie data in last 30 days. Ensure your device records activity.");
+        }
 
-  /// Open Health Connect app or store
+        return calories.round();
+      } catch (e) {
+        debugPrint("❌ [Calories] Error: $e");
+        return 0;
+      }
+    }
+
+    /// Get monthly health summary (last 30 days)
+    /// Returns aggregated stats: avg BPM, total calories, total sleep
+    Future<Map<String, dynamic>> getMonthlySummary() async {
+      final now = DateTime.now();
+      final thirtyDaysAgo = now.subtract(const Duration(days: 30));
+
+      try {
+        debugPrint("📊 [Monthly] Fetching summary for last 30 days...");
+
+        // Fetch all BPM readings and calculate average
+        int bpmCount = 0;
+        int bpmTotal = 0;
+        try {
+          final bpmData = await _health.getHealthDataFromTypes(
+            startTime: thirtyDaysAgo,
+            endTime: now,
+            types: [HealthDataType.HEART_RATE],
+          );
+          if (bpmData.isNotEmpty) {
+            for (var p in bpmData) {
+              bpmTotal += (p.value as NumericHealthValue).numericValue.toInt();
+            }
+            bpmCount = bpmData.length;
+          }
+        } catch (e) {
+          debugPrint("⚠️ [Monthly] BPM fetch error: $e");
+        }
+
+        // Fetch all calories and sum
+        double caloriesTotal = 0;
+        try {
+          final caloriesData = await _health.getHealthDataFromTypes(
+            startTime: thirtyDaysAgo,
+            endTime: now,
+            types: [HealthDataType.ACTIVE_ENERGY_BURNED],
+          );
+          for (var p in caloriesData) {
+            caloriesTotal += (p.value as NumericHealthValue).numericValue.toDouble();
+          }
+        } catch (e) {
+          debugPrint("⚠️ [Monthly] Calories fetch error: $e");
+        }
+
+        // Fetch all sleep and sum
+        double sleepTotal = 0;
+        int sleepDays = 0;
+        try {
+          final sleepData = await _health.getHealthDataFromTypes(
+            startTime: thirtyDaysAgo,
+            endTime: now,
+            types: [HealthDataType.SLEEP_SESSION],
+          );
+          for (var p in sleepData) {
+            sleepTotal += p.dateTo.difference(p.dateFrom).inMinutes / 60.0;
+          }
+          sleepDays = sleepData.length;
+        } catch (e) {
+          debugPrint("⚠️ [Monthly] Sleep fetch error: $e");
+        }
+
+        final avgBpm = bpmCount > 0 ? (bpmTotal / bpmCount).toInt() : 0;
+        final avgSleep = sleepDays > 0 ? (sleepTotal / sleepDays) : 0;
+
+        final summary = {
+          'avg_heart_rate_bpm': avgBpm,
+          'total_calories_burned': caloriesTotal.toInt(),
+          'total_sleep_hours': double.parse(sleepTotal.toStringAsFixed(1)),
+          'avg_sleep_per_night': double.parse(avgSleep.toStringAsFixed(1)),
+          'heart_rate_readings': bpmCount,
+          'sleep_nights': sleepDays,
+          'period_days': 30,
+        };
+
+        debugPrint(
+          "📊 [Monthly] Summary: Avg BPM=$avgBpm, Total Calories=${caloriesTotal.toInt()}, Total Sleep=${sleepTotal.toStringAsFixed(1)}h",
+        );
+        return summary;
+      } catch (e) {
+        debugPrint("❌ [Monthly] Error fetching summary: $e");
+        return {
+          'avg_heart_rate_bpm': 0,
+          'total_calories_burned': 0,
+          'total_sleep_hours': 0.0,
+          'avg_sleep_per_night': 0.0,
+          'heart_rate_readings': 0,
+          'sleep_nights': 0,
+          'period_days': 30,
+        };
+      }
+    }
+
+   /// Open Health Connect app or store
   Future<void> openHealthConnectApp() async {
     final uri = Uri.parse('healthconnect://');
     if (await canLaunchUrl(uri)) {
