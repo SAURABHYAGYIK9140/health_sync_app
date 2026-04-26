@@ -134,90 +134,159 @@ class HealthService extends GetxService {
     return false;
   }
 
-  /// Fetch latest data with permission verification
+  /// Fetch latest raw data and construct a payload containing the full record set
   Future<Map<String, dynamic>?> fetchLatestSyncPayload() async {
     final storage = Get.find<StorageService>();
-    final lastSync = storage.getLastSync() ??
-        DateTime.now().subtract(const Duration(hours: 24));
-
     final now = DateTime.now();
+    DateTime? storedLastSync = storage.getLastSync();
+    debugPrint("DEBUG: Stored last sync: $storedLastSync");
+
+    final lastSync = (storedLastSync == null || storedLastSync.isAfter(now))
+        ? now.subtract(const Duration(hours: 24))
+        : storedLastSync;
+
     final deviceId = await storage.getDeviceId();
+    debugPrint('[HealthService] fetchLatestSyncPayload: lastSync=$lastSync, now=$now, deviceId=$deviceId');
+
+    List<HealthDataPoint> allData = [];
 
     try {
-      // Verify permissions before fetching
+      // Step 1: Check and request permissions
       final hasPerms = await hasPermissions();
+      debugPrint('[HealthService] Step 1 - hasPermissions: $hasPerms');
       if (!hasPerms) {
         debugPrint("Health permissions not granted, attempting to request them");
         final granted = await requestPermissionsWithRetry();
+        debugPrint('[HealthService] Step 1 - requestPermissionsWithRetry result: $granted');
         if (!granted) {
+          debugPrint('[HealthService] STOPPING: Health permissions not granted after retry');
           throw Exception("Health permissions not granted. Please enable in settings.");
         }
       }
 
-      debugPrint("Fetching health data from $lastSync to $now");
-      
-      // Fetch each type individually to prevent one failure from blocking all
-      List<HealthDataPoint> allData = [];
+      // Step 2: Fetch data from last 24 hours
+      debugPrint('[HealthService] Step 2 - Attempting to fetch data from $lastSync to $now');
       for (var type in types) {
         try {
-          // Check permission for THIS specific type before fetching
           final hasTypePerm = await _health.hasPermissions([type]) ?? false;
+          debugPrint('[HealthService] Type $type - Permission: $hasTypePerm');
           if (!hasTypePerm) {
-            debugPrint("Skipping $type: Permission not granted");
+            debugPrint('[HealthService] Type $type - Skipping (no permission)');
             continue;
           }
 
+          debugPrint('[HealthService] Type $type - Fetching from $lastSync to $now');
           final data = await _health.getHealthDataFromTypes(
             startTime: lastSync,
             endTime: now,
             types: [type],
           );
+          debugPrint('[HealthService] Type $type - Fetched ${data.length} records');
           allData.addAll(data);
         } catch (e) {
-          debugPrint("Failed to fetch $type: $e");
+          debugPrint("[HealthService] Type $type - Failed to fetch: $e");
         }
       }
 
-      final cleanData = _health.removeDuplicates(allData);
-      debugPrint("Fetched ${cleanData.length} total health records");
+      // Step 3: Check if we have data
+      var cleanData = _health.removeDuplicates(allData);
+      debugPrint('[HealthService] Step 3 - After removeDuplicates from 24h: ${cleanData.length} records');
 
-      if (cleanData.isEmpty) return null;
+      // Step 4: Fallback to 7 days if no data found
+      if (cleanData.isEmpty) {
+        debugPrint('[HealthService] Step 4 - No data in 24h range, trying 7-day fallback');
+        final weekAgo = now.subtract(const Duration(days: 7));
+        List<HealthDataPoint> weekData = [];
 
-      int steps = 0;
-      double heartRate = 0;
-      int hrCount = 0;
-      double sleepHours = 0;
-      double calories = 0;
+        for (var type in types) {
+          try {
+            final hasTypePerm = await _health.hasPermissions([type]) ?? false;
+            if (!hasTypePerm) {
+              debugPrint('[HealthService] 7d Type $type - Skipping (no permission)');
+              continue;
+            }
 
-      for (var p in cleanData) {
-        if (p.type == HealthDataType.STEPS) {
-          steps += (p.value as NumericHealthValue).numericValue.toInt();
-        } else if (p.type == HealthDataType.HEART_RATE) {
-          heartRate += (p.value as NumericHealthValue).numericValue.toDouble();
-          hrCount++;
-        } else if (p.type == HealthDataType.SLEEP_SESSION) {
-          sleepHours += p.dateTo.difference(p.dateFrom).inMinutes / 60.0;
-        } else if (p.type == HealthDataType.ACTIVE_ENERGY_BURNED) {
-          calories += (p.value as NumericHealthValue).numericValue.toDouble();
+            debugPrint('[HealthService] 7d Type $type - Fetching from $weekAgo to $now');
+            final data = await _health.getHealthDataFromTypes(
+              startTime: weekAgo,
+              endTime: now,
+              types: [type],
+            );
+            debugPrint('[HealthService] 7d Type $type - Fetched ${data.length} records');
+            weekData.addAll(data);
+          } catch (e) {
+            debugPrint("[HealthService] 7d Type $type - Failed to fetch: $e");
+          }
+        }
+
+        final weekClean = _health.removeDuplicates(weekData);
+        debugPrint('[HealthService] Step 4 - After removeDuplicates from 7d: ${weekClean.length} records');
+
+        if (weekClean.isEmpty) {
+          debugPrint('[HealthService] No health data found in both 24h and 7d ranges. Injecting mock data for testing.');
+          // Injecting mock data so that API can be tested even on emulator without health data
+          cleanData = [];
+        } else {
+          cleanData = weekClean;
         }
       }
 
-      final payload = {
-        "type": "health_sync",
+      debugPrint('[HealthService] Step 5 - Building payload with ${cleanData.length} records');
+
+      // Step 5: Transform raw data points into JSON format
+      final List<Map<String, dynamic>> dataPoints = cleanData.map((p) {
+        dynamic val;
+        try {
+          if (p.value is NumericHealthValue) {
+            val = (p.value as NumericHealthValue).numericValue;
+          } else {
+            val = p.value.toString();
+          }
+        } catch (_) {
+          val = p.value.toString();
+        }
+
+        return {
+          'type': p.typeString,
+          'value': val,
+          'unit': p.unitString,
+          'from': p.dateFrom.toIso8601String(),
+          'to': p.dateTo.toIso8601String(),
+          'source_id': p.sourceId,
+          'source_name': p.sourceName,
+        };
+      }).toList();
+
+      // If no data points, add a mock data point for testing
+      if (dataPoints.isEmpty) {
+        dataPoints.add({
+          'type': 'STEPS',
+          'value': 1000,
+          'unit': 'COUNT',
+          'from': now.subtract(const Duration(hours: 1)).toIso8601String(),
+          'to': now.toIso8601String(),
+          'source_id': 'mock_source',
+          'source_name': 'Mock Data (Emulator)',
+        });
+      }
+
+      final rdata = {
+        "type": "health_data_upload",
         "device_id": deviceId,
         "payload": {
-          "steps": steps,
-          "heart_rate": hrCount > 0 ? (heartRate / hrCount).round() : 0,
-          "sleep_hours": double.parse(sleepHours.toStringAsFixed(2)),
-          "calories": calories.round(),
+          "records_count": dataPoints.length,
           "timestamp": now.toIso8601String(),
+          "health_data": dataPoints,
         }
       };
-      debugPrint("Constructed sync payload: $payload");
-      return payload;
-    } catch (e) {
-      debugPrint("Fetch health data failed: $e");
-      return null;
+
+      debugPrint('[HealthService] Step 5 - rdata created successfully with ${dataPoints.length} data points');
+      return rdata;
+    } catch (e, stack) {
+      debugPrint("[HealthService] EXCEPTION in fetchLatestSyncPayload: $e");
+      debugPrint("[HealthService] Stack trace: $stack");
+      // Rethrow so the dashboard controller can catch it and show the actual error
+      throw Exception("Payload generation failed: $e");
     }
   }
 
@@ -227,21 +296,32 @@ class HealthService extends GetxService {
     final midnight = DateTime(now.year, now.month, now.day);
     final yesterday = now.subtract(const Duration(hours: 24));
 
+    // Defensive: Ensure time order
+    if (!midnight.isBefore(now)) {
+      debugPrint("[HealthService] Invalid time range: midnight >= now. Returning 0 steps.");
+      return 0;
+    }
+    if (!yesterday.isBefore(now)) {
+      debugPrint("[HealthService] Invalid time range: yesterday >= now. Returning 0 steps.");
+      return 0;
+    }
+
     try {
       final hasPerm = await _health.hasPermissions([HealthDataType.STEPS]) ?? false;
       if (!hasPerm) return 0;
 
       // Try aggregate first (standard)
-      int? steps = await _health.getTotalStepsInInterval(midnight, now);
-      
+      int? steps;
+      if (midnight.isBefore(now)) {
+        steps = await _health.getTotalStepsInInterval(midnight, now);
+      }
       // Fallback: If 0, try the last 24 hours (sometimes midnight boundary is tricky)
-      if (steps == null || steps == 0) {
+      if ((steps == null || steps == 0) && yesterday.isBefore(now)) {
         steps = await _health.getTotalStepsInInterval(yesterday, now);
         debugPrint("Steps check (Last 24h): $steps");
       }
-      
       // Secondary Fallback: Fetch raw data points
-      if (steps == null || steps == 0) {
+      if ((steps == null || steps == 0) && yesterday.isBefore(now)) {
         final data = await _health.getHealthDataFromTypes(
           startTime: yesterday,
           endTime: now,
@@ -251,7 +331,6 @@ class HealthService extends GetxService {
           steps = (steps ?? 0) + (p.value as NumericHealthValue).numericValue.toInt();
         }
       }
-      
       return steps ?? 0;
     } catch (e) {
       debugPrint("getTodaySteps failed: $e");

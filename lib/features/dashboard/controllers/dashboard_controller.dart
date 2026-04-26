@@ -1,5 +1,7 @@
 import 'package:get/get.dart';
 import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'package:dio/dio.dart' as dio_pkg;
 import 'package:flutter_background_service/flutter_background_service.dart';
 import '../../../services/health_service.dart';
 import '../../../core/storage/storage_service.dart';
@@ -39,7 +41,7 @@ class DashboardController extends GetxController {
     await fetchLatestData();
     final token = await storage.getToken();
 
-    // debugPrint("Payload: $token");
+    debugPrint("Payload: $token");
     _startBackgroundServiceSafe();
   }
 
@@ -82,68 +84,102 @@ class DashboardController extends GetxController {
   }
 
   Future<void> syncNow({bool isRetry = false}) async {
-    if (isSyncing.value) return;
-    
+    if (isSyncing.value) {
+      debugPrint("Sync already in progress, skipping.");
+      return;
+    }
     isSyncing.value = true;
     debugPrint("Sync process started...");
 
     try {
+
       // Step 1: Force a permission check before syncing
       final hasPerm = await _healthService.hasPermissions();
+      debugPrint("[syncNow] hasPermissions: $hasPerm");
       if (!hasPerm) {
-         debugPrint("Health permissions not granted, attempting to request them");
-         final granted = await _healthService.requestPermissions();
-         if (!granted) {
-            throw Exception("Sync failed: Health permissions are required.");
-         }
+        debugPrint("Health permissions not granted, attempting to request them");
+        final granted = await _healthService.requestPermissions();
+        debugPrint("[syncNow] requestPermissions result: $granted");
+        if (!granted) {
+          final msg = "Sync failed: Health permissions are required.";
+          debugPrint(msg);
+          await storage.addSyncLog(false, msg);
+          Get.snackbar("Sync Error", "Health permissions are required.",
+            snackPosition: SnackPosition.BOTTOM,
+            backgroundColor: Colors.redAccent,
+            colorText: Colors.white,
+            duration: const Duration(seconds: 5));
+          return;
+        }
       }
 
       final payload = await _healthService.fetchLatestSyncPayload();
-      
+      debugPrint("[syncNow] Payload: $payload");
+
       if (payload != null) {
         final userId = storage.getUserId();
+        final deviceId = await storage.getDeviceId();
         if (userId == null) {
-          throw Exception("User ID not found. Please log in again.");
+          final msg = "User ID not found. Please log in again.";
+          debugPrint(msg);
+          await storage.addSyncLog(false, msg);
+          Get.snackbar("Sync Error", msg,
+            snackPosition: SnackPosition.BOTTOM,
+            backgroundColor: Colors.redAccent,
+            colorText: Colors.white,
+            duration: const Duration(seconds: 5));
+          return;
         }
-        final url = '${_dio.dio.options.baseUrl}submissions/$userId';
-        debugPrint("DEBUG MODE - SYNC START");
+        final url = '${_dio.dio.options.baseUrl}submissions';
+        debugPrint("DEBUG MODE - MULTIPART SYNC START");
         debugPrint("URL: $url");
-        debugPrint("PAYLOAD: $payload");
+
+        // Create FormData for multipart file upload
+        final formData = dio_pkg.FormData.fromMap({
+          'type': payload['type'] ?? 'health_data_upload',
+          'device_id': deviceId ?? '',
+          'payload': jsonEncode(payload['payload'] ?? {}),
+          'file': dio_pkg.MultipartFile.fromString(
+            jsonEncode(payload),
+            filename: 'health_data_${DateTime.now().millisecondsSinceEpoch}.json',
+          ),
+        });
 
         // Use a timeout to prevent the infinite loading spinner
-        final response = await _dio.dio.post('submissions/$userId', data: payload)
-            .timeout(const Duration(seconds: 20));
+        final response = await _dio.dio.post(
+          'submissions', 
+          data: formData,
+          options: dio_pkg.Options(
+            contentType: 'multipart/form-data',
+          ),
+        ).timeout(const Duration(seconds: 30));
 
         debugPrint("DEBUG MODE - SYNC SUCCESS");
-        debugPrint("RESPONSE: ${response.data}");
+        debugPrint("RESPONSE STATUS: ${response.statusCode}");
+        debugPrint("RESPONSE DATA: ${jsonEncode(response.data)}");
 
         final now = DateTime.parse(payload['payload']['timestamp']);
         await storage.saveLastSync(now);
         lastSync.value = now;
-        
         await storage.addSyncLog(true, "Manual sync successful.");
-        
         Get.snackbar("Success", "Health data synced successfully",
           snackPosition: SnackPosition.BOTTOM,
           backgroundColor: AppTheme.accentColor,
           colorText: Colors.white);
       } else {
-        await storage.addSyncLog(true, "Sync checked: No data found to upload.");
+        final msg = "Sync checked: No data found to upload.";
+        debugPrint("[syncNow] $msg");
+        await storage.addSyncLog(true, msg);
         Get.snackbar("Info", "No data found to sync. Try recording some activity!",
           snackPosition: SnackPosition.BOTTOM);
       }
-      
-      await fetchLatestData();
-      
     } catch (e) {
       debugPrint("Sync Error: $e");
       String errorMsg = e.toString();
       if (e is Exception && e.toString().contains("timeout")) {
         errorMsg = "Server connection timed out. Please try again later.";
       }
-      
       await storage.addSyncLog(false, "Sync failed: $errorMsg");
-
       Get.snackbar("Sync Error", errorMsg.replaceAll("Exception:", ""),
         snackPosition: SnackPosition.BOTTOM,
         backgroundColor: Colors.redAccent,
@@ -151,6 +187,7 @@ class DashboardController extends GetxController {
         duration: const Duration(seconds: 5));
     } finally {
       isSyncing.value = false;
+      await fetchLatestData();
     }
   }
 }
