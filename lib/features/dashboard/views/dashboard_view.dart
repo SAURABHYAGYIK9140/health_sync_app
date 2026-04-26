@@ -274,13 +274,15 @@ class DashboardView extends GetView<DashboardController> {
                     Obx(() => Text(
                       controller.isSyncing.value 
                           ? "Syncing in progress..." 
-                          : (controller.lastSync.value != null ? "Sync Success" : "Sync Required"),
+                          : (controller.lastSync.value != null ? "Sync Success" : "Waiting to sync"),
                       style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                     )),
                     Obx(() => Text(
-                      controller.lastSync.value != null
-                          ? "Last sync: ${DateFormat('hh:mm a').format(controller.lastSync.value!)}"
-                          : "Tap to synchronize data",
+                      controller.isSyncing.value
+                          ? "Auto-syncing your health data..."
+                          : (controller.lastSync.value != null
+                              ? "Last sync: ${DateFormat('hh:mm a').format(controller.lastSync.value!)}"
+                              : "Data syncs automatically on open"),
                       style: TextStyle(color: Colors.black54, fontSize: 13),
                     )),
                   ],
@@ -288,53 +290,19 @@ class DashboardView extends GetView<DashboardController> {
               ),
             ],
           ),
-          const SizedBox(height: 20),
-          Obx(() {
-            final canSync = controller.isHealthConnectInstalled.value &&
-                controller.hasHealthAccess.value &&
-                !controller.isSyncing.value;
-            return Column(
-              children: [
-                ElevatedButton(
-                  onPressed: canSync ? controller.syncNow : null,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.primaryColor,
-                    disabledBackgroundColor: Colors.grey.shade200,
-                    minimumSize: const Size(double.infinity, 50),
-                  ),
-                  child: controller.isSyncing.value
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                        )
-                      : Text(
-                          "Sync Now",
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: canSync ? Colors.white : Colors.grey,
-                          ),
-                        ),
-                ),
-                if (!controller.isHealthConnectInstalled.value)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 8),
-                    child: Text(
-                      "Install Health Connect to enable sync",
-                      style: TextStyle(fontSize: 12, color: Colors.black45),
-                    ),
-                  )
-                else if (!controller.hasHealthAccess.value)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 8),
-                    child: Text(
-                      "Grant health permissions to enable sync",
-                      style: TextStyle(fontSize: 12, color: Colors.black45),
+          // Show a progress bar while syncing
+          Obx(() => controller.isSyncing.value
+              ? Padding(
+                  padding: const EdgeInsets.only(top: 16),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: const LinearProgressIndicator(
+                      minHeight: 4,
+                      backgroundColor: Color(0xFFE0E0E0),
                     ),
                   ),
-              ],
-            );
-          }),
+                )
+              : const SizedBox.shrink()),
         ],
       ),
     );

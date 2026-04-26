@@ -46,11 +46,14 @@ class HealthService extends GetxService {
         Permission.activityRecognition,
         Permission.sensors,
       ].request();
-      
-      final activityOk = statuses[Permission.activityRecognition]?.isGranted ?? false;
+
+      final activityOk =
+          statuses[Permission.activityRecognition]?.isGranted ?? false;
       final sensorsOk = statuses[Permission.sensors]?.isGranted ?? false;
-      
-      debugPrint("System permissions - Activity: $activityOk, Sensors: $sensorsOk");
+
+      debugPrint(
+        "System permissions - Activity: $activityOk, Sensors: $sensorsOk",
+      );
       return activityOk; // Sensors is optional but recommended
     } catch (e) {
       debugPrint("System permission request failed: $e");
@@ -73,7 +76,8 @@ class HealthService extends GetxService {
         final status = await _health.getHealthConnectSdkStatus();
         if (status != HealthConnectSdkStatus.sdkAvailable) {
           debugPrint("Health Connect is not available: $status");
-          if (status == HealthConnectSdkStatus.sdkUnavailableProviderUpdateRequired) {
+          if (status ==
+              HealthConnectSdkStatus.sdkUnavailableProviderUpdateRequired) {
             await _health.installHealthConnect();
           }
           return false;
@@ -83,8 +87,10 @@ class HealthService extends GetxService {
       // Step 3: Request Health Connect permissions
       final permissions = types.map((e) => HealthDataAccess.READ).toList();
 
-      debugPrint("Requesting Health Data permissions for ${types.length} data types");
-      
+      debugPrint(
+        "Requesting Health Data permissions for ${types.length} data types",
+      );
+
       final granted = await _health.requestAuthorization(
         types,
         permissions: permissions,
@@ -108,7 +114,7 @@ class HealthService extends GetxService {
   }
 
   /// Check if essential Health Connect permissions are granted.
-  /// 
+  ///
   /// On Android 10 (API 29), the `hasPermissions()` API from the health package
   /// is unreliable and may return false even when permissions ARE granted.
   /// We use a practical fallback: try to actually read data. If it succeeds
@@ -117,16 +123,22 @@ class HealthService extends GetxService {
   Future<bool> hasPermissions() async {
     try {
       // Step 1: Try the standard API first
-      final hasSteps = await _health.hasPermissions([HealthDataType.STEPS]) ?? false;
-      final hasHeart = await _health.hasPermissions([HealthDataType.HEART_RATE]) ?? false;
-      
-      debugPrint("Permission status (API) - Steps: $hasSteps, Heart Rate: $hasHeart");
-      
+      final hasSteps =
+          await _health.hasPermissions([HealthDataType.STEPS]) ?? false;
+      final hasHeart =
+          await _health.hasPermissions([HealthDataType.HEART_RATE]) ?? false;
+
+      debugPrint(
+        "Permission status (API) - Steps: $hasSteps, Heart Rate: $hasHeart",
+      );
+
       if (hasSteps || hasHeart) return true;
 
       // Step 2: API says false — but on Android 10 this can be wrong.
       // Try a real data fetch as the ground-truth check.
-      debugPrint("hasPermissions API returned false — trying practical data-read check...");
+      debugPrint(
+        "hasPermissions API returned false — trying practical data-read check...",
+      );
       return await _canActuallyReadData();
     } catch (e) {
       debugPrint("hasPermissions check failed: $e");
@@ -140,7 +152,7 @@ class HealthService extends GetxService {
     try {
       final now = DateTime.now();
       final past = now.subtract(const Duration(hours: 1));
-      
+
       // A successful call (even with 0 results) means we have permission.
       // A SecurityException means we don't.
       await _health.getHealthDataFromTypes(
@@ -148,20 +160,24 @@ class HealthService extends GetxService {
         endTime: now,
         types: [HealthDataType.STEPS],
       );
-      
+
       debugPrint("Practical permission check: SUCCESS (data read succeeded)");
       return true;
     } catch (e) {
       final errorStr = e.toString().toLowerCase();
-      if (errorStr.contains('security') || 
+      if (errorStr.contains('security') ||
           errorStr.contains('permission') ||
           errorStr.contains('unauthorized')) {
-        debugPrint("Practical permission check: FAILED (SecurityException) — $e");
+        debugPrint(
+          "Practical permission check: FAILED (SecurityException) — $e",
+        );
         return false;
       }
       // Other errors (network, timeout, etc.) — assume we have permission
       // but something else went wrong
-      debugPrint("Practical permission check: AMBIGUOUS error (assuming granted) — $e");
+      debugPrint(
+        "Practical permission check: AMBIGUOUS error (assuming granted) — $e",
+      );
       return true;
     }
   }
@@ -171,7 +187,7 @@ class HealthService extends GetxService {
     for (int i = 0; i <= maxRetries; i++) {
       final granted = await requestPermissions();
       if (granted) return true;
-      
+
       if (i < maxRetries) {
         debugPrint("Permission request retry $i...");
         await Future.delayed(const Duration(milliseconds: 1000));
@@ -192,7 +208,9 @@ class HealthService extends GetxService {
         : storedLastSync;
 
     final deviceId = await storage.getDeviceId();
-    debugPrint('[HealthService] fetchLatestSyncPayload: lastSync=$lastSync, now=$now, deviceId=$deviceId');
+    debugPrint(
+      '[HealthService] fetchLatestSyncPayload: lastSync=$lastSync, now=$now, deviceId=$deviceId',
+    );
 
     List<HealthDataPoint> allData = [];
 
@@ -201,33 +219,42 @@ class HealthService extends GetxService {
       final hasPerms = await hasPermissions();
       debugPrint('[HealthService] Step 1 - hasPermissions: $hasPerms');
       if (!hasPerms) {
-        debugPrint("Health permissions not granted, attempting to request them");
+        debugPrint(
+          "Health permissions not granted, attempting to request them",
+        );
         final granted = await requestPermissionsWithRetry();
-        debugPrint('[HealthService] Step 1 - requestPermissionsWithRetry result: $granted');
+        debugPrint(
+          '[HealthService] Step 1 - requestPermissionsWithRetry result: $granted',
+        );
         if (!granted) {
-          debugPrint('[HealthService] STOPPING: Health permissions not granted after retry');
-          throw Exception("Health permissions not granted. Please enable in settings.");
+          debugPrint(
+            '[HealthService] STOPPING: Health permissions not granted after retry',
+          );
+          throw Exception(
+            "Health permissions not granted. Please enable in settings.",
+          );
         }
       }
 
       // Step 2: Fetch data from last 24 hours
-      debugPrint('[HealthService] Step 2 - Attempting to fetch data from $lastSync to $now');
+      debugPrint(
+        '[HealthService] Step 2 - Attempting to fetch data from $lastSync to $now',
+      );
       for (var type in types) {
         try {
-          final hasTypePerm = await _health.hasPermissions([type]) ?? false;
-          debugPrint('[HealthService] Type $type - Permission: $hasTypePerm');
-          if (!hasTypePerm) {
-            debugPrint('[HealthService] Type $type - Skipping (no permission)');
-            continue;
-          }
-
-          debugPrint('[HealthService] Type $type - Fetching from $lastSync to $now');
+          // Skip unreliable hasPermissions() check — just try to read.
+          // A SecurityException means no permission; empty results are fine.
+          debugPrint(
+            '[HealthService] Type $type - Fetching from $lastSync to $now',
+          );
           final data = await _health.getHealthDataFromTypes(
             startTime: lastSync,
             endTime: now,
             types: [type],
           );
-          debugPrint('[HealthService] Type $type - Fetched ${data.length} records');
+          debugPrint(
+            '[HealthService] Type $type - Fetched ${data.length} records',
+          );
           allData.addAll(data);
         } catch (e) {
           debugPrint("[HealthService] Type $type - Failed to fetch: $e");
@@ -236,29 +263,31 @@ class HealthService extends GetxService {
 
       // Step 3: Check if we have data
       var cleanData = _health.removeDuplicates(allData);
-      debugPrint('[HealthService] Step 3 - After removeDuplicates from 24h: ${cleanData.length} records');
+      debugPrint(
+        '[HealthService] Step 3 - After removeDuplicates from 24h: ${cleanData.length} records',
+      );
 
       // Step 4: Fallback to 7 days if no data found
       if (cleanData.isEmpty) {
-        debugPrint('[HealthService] Step 4 - No data in 24h range, trying 7-day fallback');
+        debugPrint(
+          '[HealthService] Step 4 - No data in 24h range, trying 7-day fallback',
+        );
         final weekAgo = now.subtract(const Duration(days: 7));
         List<HealthDataPoint> weekData = [];
 
         for (var type in types) {
           try {
-            final hasTypePerm = await _health.hasPermissions([type]) ?? false;
-            if (!hasTypePerm) {
-              debugPrint('[HealthService] 7d Type $type - Skipping (no permission)');
-              continue;
-            }
-
-            debugPrint('[HealthService] 7d Type $type - Fetching from $weekAgo to $now');
+            debugPrint(
+              '[HealthService] 7d Type $type - Fetching from $weekAgo to $now',
+            );
             final data = await _health.getHealthDataFromTypes(
               startTime: weekAgo,
               endTime: now,
               types: [type],
             );
-            debugPrint('[HealthService] 7d Type $type - Fetched ${data.length} records');
+            debugPrint(
+              '[HealthService] 7d Type $type - Fetched ${data.length} records',
+            );
             weekData.addAll(data);
           } catch (e) {
             debugPrint("[HealthService] 7d Type $type - Failed to fetch: $e");
@@ -266,10 +295,14 @@ class HealthService extends GetxService {
         }
 
         final weekClean = _health.removeDuplicates(weekData);
-        debugPrint('[HealthService] Step 4 - After removeDuplicates from 7d: ${weekClean.length} records');
+        debugPrint(
+          '[HealthService] Step 4 - After removeDuplicates from 7d: ${weekClean.length} records',
+        );
 
         if (weekClean.isEmpty) {
-          debugPrint('[HealthService] No health data found in both 24h and 7d ranges. Injecting mock data for testing.');
+          debugPrint(
+            '[HealthService] No health data found in both 24h and 7d ranges. Injecting mock data for testing.',
+          );
           // Injecting mock data so that API can be tested even on emulator without health data
           cleanData = [];
         } else {
@@ -277,7 +310,9 @@ class HealthService extends GetxService {
         }
       }
 
-      debugPrint('[HealthService] Step 5 - Building payload with ${cleanData.length} records');
+      debugPrint(
+        '[HealthService] Step 5 - Building payload with ${cleanData.length} records',
+      );
 
       // Step 5: Transform raw data points into JSON format
       final List<Map<String, dynamic>> dataPoints = cleanData.map((p) {
@@ -323,10 +358,12 @@ class HealthService extends GetxService {
           "records_count": dataPoints.length,
           "timestamp": now.toIso8601String(),
           "health_data": dataPoints,
-        }
+        },
       };
 
-      debugPrint('[HealthService] Step 5 - rdata created successfully with ${dataPoints.length} data points');
+      debugPrint(
+        '[HealthService] Step 5 - rdata created successfully with ${dataPoints.length} data points',
+      );
       return rdata;
     } catch (e, stack) {
       debugPrint("[HealthService] EXCEPTION in fetchLatestSyncPayload: $e");
@@ -344,18 +381,20 @@ class HealthService extends GetxService {
 
     // Defensive: Ensure time order
     if (!midnight.isBefore(now)) {
-      debugPrint("[HealthService] Invalid time range: midnight >= now. Returning 0 steps.");
+      debugPrint(
+        "[HealthService] Invalid time range: midnight >= now. Returning 0 steps.",
+      );
       return 0;
     }
     if (!yesterday.isBefore(now)) {
-      debugPrint("[HealthService] Invalid time range: yesterday >= now. Returning 0 steps.");
+      debugPrint(
+        "[HealthService] Invalid time range: yesterday >= now. Returning 0 steps.",
+      );
       return 0;
     }
 
     try {
-      final hasPerm = await _health.hasPermissions([HealthDataType.STEPS]) ?? false;
-      if (!hasPerm) return 0;
-
+      // Skip unreliable hasPermissions() — just try to read data directly.
       // Try aggregate first (standard)
       int? steps;
       if (midnight.isBefore(now)) {
@@ -374,7 +413,9 @@ class HealthService extends GetxService {
           types: [HealthDataType.STEPS],
         );
         for (var p in data) {
-          steps = (steps ?? 0) + (p.value as NumericHealthValue).numericValue.toInt();
+          steps =
+              (steps ?? 0) +
+              (p.value as NumericHealthValue).numericValue.toInt();
         }
       }
       return steps ?? 0;
@@ -387,22 +428,24 @@ class HealthService extends GetxService {
   /// Get latest heart rate
   Future<int> getLatestHeartRate() async {
     final now = DateTime.now();
-    final past = now.subtract(const Duration(days: 7)); // Look back 7 days for latest
+    final past = now.subtract(
+      const Duration(days: 7),
+    ); // Look back 7 days for latest
 
     try {
-      final hasPerm = await _health.hasPermissions([HealthDataType.HEART_RATE]) ?? false;
-      if (!hasPerm) return 0;
-
+      // Skip unreliable hasPermissions() — just try to read data directly.
       final data = await _health.getHealthDataFromTypes(
         startTime: past,
         endTime: now,
         types: [HealthDataType.HEART_RATE],
       );
-      
-      debugPrint("DEBUG: Found ${data.length} heart rate points in last 7 days");
-      
+
+      debugPrint(
+        "DEBUG: Found ${data.length} heart rate points in last 7 days",
+      );
+
       if (data.isEmpty) return 0;
-      
+
       // Get the most recent one
       data.sort((a, b) => b.dateFrom.compareTo(a.dateFrom));
       return (data.first.value as NumericHealthValue).numericValue.toInt();
@@ -418,15 +461,13 @@ class HealthService extends GetxService {
     final past = now.subtract(const Duration(days: 7)); // Look back 7 days
 
     try {
-      final hasPerm = await _health.hasPermissions([HealthDataType.SLEEP_SESSION]) ?? false;
-      if (!hasPerm) return 0.0;
-
+      // Skip unreliable hasPermissions() — just try to read data directly.
       final data = await _health.getHealthDataFromTypes(
         startTime: past,
         endTime: now,
         types: [HealthDataType.SLEEP_SESSION],
       );
-      
+
       debugPrint("DEBUG: Found ${data.length} sleep sessions in last 7 days");
       if (data.isEmpty) return 0.0;
 
@@ -438,11 +479,12 @@ class HealthService extends GetxService {
           sleepHours += p.dateTo.difference(p.dateFrom).inMinutes / 60.0;
         }
       }
-      
+
       // If no sleep today, show the last session duration
       if (sleepHours == 0 && data.isNotEmpty) {
         data.sort((a, b) => b.dateFrom.compareTo(a.dateFrom));
-        sleepHours = data.first.dateTo.difference(data.first.dateFrom).inMinutes / 60.0;
+        sleepHours =
+            data.first.dateTo.difference(data.first.dateFrom).inMinutes / 60.0;
       }
 
       return double.parse(sleepHours.toStringAsFixed(1));
@@ -456,22 +498,59 @@ class HealthService extends GetxService {
   Future<int> getTodayCalories() async {
     final now = DateTime.now();
     final midnight = DateTime(now.year, now.month, now.day);
+    final yesterday = now.subtract(const Duration(hours: 24));
 
     try {
-      final hasPerm = await _health.hasPermissions([HealthDataType.ACTIVE_ENERGY_BURNED]) ?? false;
-      if (!hasPerm) return 0;
+      // Skip unreliable hasPermissions() — just try to read data directly.
+      double calories = 0;
 
+      // Try ACTIVE_ENERGY_BURNED from midnight first
       final data = await _health.getHealthDataFromTypes(
         startTime: midnight,
         endTime: now,
         types: [HealthDataType.ACTIVE_ENERGY_BURNED],
       );
-      
-      double calories = 0;
       for (var p in data) {
         calories += (p.value as NumericHealthValue).numericValue.toDouble();
       }
-      debugPrint("DEBUG: Found ${data.length} calorie records today");
+      debugPrint(
+        "DEBUG: Found ${data.length} calorie records today (midnight), total=$calories",
+      );
+
+      // Fallback: try last 24h if midnight range returned nothing
+      if (calories == 0) {
+        final data24h = await _health.getHealthDataFromTypes(
+          startTime: yesterday,
+          endTime: now,
+          types: [HealthDataType.ACTIVE_ENERGY_BURNED],
+        );
+        for (var p in data24h) {
+          calories += (p.value as NumericHealthValue).numericValue.toDouble();
+        }
+        debugPrint(
+          "DEBUG: Found ${data24h.length} calorie records (24h fallback), total=$calories",
+        );
+      }
+
+      // Secondary fallback: try BASAL_ENERGY_BURNED (some devices use this)
+      if (calories == 0) {
+        try {
+          final basalData = await _health.getHealthDataFromTypes(
+            startTime: yesterday,
+            endTime: now,
+            types: [HealthDataType.BASAL_ENERGY_BURNED],
+          );
+          for (var p in basalData) {
+            calories += (p.value as NumericHealthValue).numericValue.toDouble();
+          }
+          debugPrint(
+            "DEBUG: Found ${basalData.length} basal calorie records, total=$calories",
+          );
+        } catch (e) {
+          debugPrint("BASAL_ENERGY_BURNED fetch failed (not critical): $e");
+        }
+      }
+
       return calories.round();
     } catch (e) {
       debugPrint("getTodayCalories failed: $e");
