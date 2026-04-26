@@ -8,7 +8,7 @@ import '../../../core/storage/storage_service.dart';
 import '../../../core/network/dio_client.dart';
 import '../../../core/theme/app_theme.dart';
 
-class DashboardController extends GetxController {
+class DashboardController extends GetxController with WidgetsBindingObserver {
   final _healthService = Get.find<HealthService>();
   final storage = Get.find<StorageService>();
   final _dio = Get.find<DioClient>();
@@ -19,12 +19,31 @@ class DashboardController extends GetxController {
   final calories = 0.obs;
   final isSyncing = false.obs;
   final hasHealthAccess = true.obs;
+  final isHealthConnectInstalled = true.obs; // false only on Android when HC is missing
   final lastSync = Rxn<DateTime>();
 
   @override
   void onInit() {
     super.onInit();
     lastSync.value = storage.getLastSync();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void onClose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.onClose();
+  }
+
+  /// Auto-recheck Health Connect when app comes back to foreground
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // User may have just installed Health Connect from Play Store
+      if (!isHealthConnectInstalled.value) {
+        recheckHealthConnect();
+      }
+    }
   }
 
   @override
@@ -34,17 +53,36 @@ class DashboardController extends GetxController {
   }
 
   Future<void> _init() async {
-    // Check and request permissions on startup if needed
     // Delay slightly to ensure Activity is attached
     await Future.delayed(const Duration(milliseconds: 500));
-    await _handleHealthPermissions();
-    await fetchLatestData();
-    final token = await storage.getToken();
 
+    // Step 1: Check if Health Connect is installed (Android only)
+    final hcInstalled = await _healthService.checkHealthConnect();
+    isHealthConnectInstalled.value = hcInstalled;
+    debugPrint("[DashboardController] Health Connect installed: $hcInstalled");
+
+    if (!hcInstalled) {
+      // Don't proceed further — show install prompt
+      debugPrint("[DashboardController] Health Connect not installed. Showing install prompt.");
+      return;
+    }
+
+    // Step 2: Check permissions
+    await _handleHealthPermissions();
+
+    // Step 3: Only proceed if permissions are granted
+    if (!hasHealthAccess.value) {
+      debugPrint("[DashboardController] Permissions not granted. Stopping init — waiting for user.");
+      return; // Background service will NOT start until user grants access
+    }
+
+    // Step 4: Load data & start background service
+    await fetchLatestData();
+
+    final token = await storage.getToken();
     debugPrint("Payload: $token");
     _startBackgroundServiceSafe();
   }
-
 
   Future<void> _handleHealthPermissions() async {
     final hasPermission = await _healthService.hasPermissions();
@@ -57,11 +95,65 @@ class DashboardController extends GetxController {
     }
   }
 
+  /// Called when user taps "Install Health Connect" button
+  Future<void> promptInstallHealthConnect() async {
+    await _healthService.openHealthConnectStore();
+  }
+
+  /// Re-check Health Connect after user returns from Play Store
+  Future<void> recheckHealthConnect() async {
+    final hcInstalled = await _healthService.checkHealthConnect();
+    isHealthConnectInstalled.value = hcInstalled;
+    debugPrint("[DashboardController] Re-check Health Connect installed: $hcInstalled");
+
+    if (hcInstalled) {
+      await _handleHealthPermissions();
+      await fetchLatestData();
+      _startBackgroundServiceSafe();
+    }
+  }
+
   Future<void> requestHealthAccess() async {
+    // Step 1: Check if Health Connect is installed (same as PermissionsController)
+    final isInstalled = await _healthService.checkHealthConnect();
+    isHealthConnectInstalled.value = isInstalled;
+
+    if (!isInstalled) {
+      Get.defaultDialog(
+        title: "Health Connect Required",
+        middleText: "Install Health Connect to sync your health data.",
+        textConfirm: "Install",
+        textCancel: "Cancel",
+        confirmTextColor: Colors.white,
+        onConfirm: () {
+          Get.back();
+          _healthService.openHealthConnectStore();
+        },
+      );
+      return;
+    }
+
+    // Step 2: Request permissions (same as PermissionsController)
     final granted = await _healthService.requestPermissions();
+    debugPrint("[Dashboard] Health Permission Granted: $granted");
     hasHealthAccess.value = granted;
+
     if (granted) {
       await fetchLatestData();
+      _startBackgroundServiceSafe();
+    } else {
+      // Show retry dialog if permissions not granted
+      Get.defaultDialog(
+        title: "Permission Required",
+        middleText: "Health data access is needed to show your activity. Please allow access.",
+        textConfirm: "Retry",
+        textCancel: "Cancel",
+        confirmTextColor: Colors.white,
+        onConfirm: () {
+          Get.back();
+          requestHealthAccess(); // Retry the full flow
+        },
+      );
     }
   }
 

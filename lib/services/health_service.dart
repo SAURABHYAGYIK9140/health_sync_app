@@ -92,31 +92,77 @@ class HealthService extends GetxService {
 
       debugPrint("Health permissions request result: $granted");
 
-      // Verify at least STEPS are granted
-      final verified = await hasPermissions();
-      debugPrint("Verified Health permissions (Steps): $verified");
+      // If requestAuthorization says granted, trust it (don't re-verify —
+      // hasPermissions() is unreliable on Android 10)
+      if (granted) return true;
 
-      return verified || granted;
+      // Fallback: requestAuthorization returned false, but double-check
+      // with our practical data-read test
+      final verified = await hasPermissions();
+      debugPrint("Fallback hasPermissions check: $verified");
+      return verified;
     } catch (e) {
       debugPrint("Permission request exception: $e");
       return false;
     }
   }
 
-  /// Check if essential Health Connect permissions are granted
+  /// Check if essential Health Connect permissions are granted.
+  /// 
+  /// On Android 10 (API 29), the `hasPermissions()` API from the health package
+  /// is unreliable and may return false even when permissions ARE granted.
+  /// We use a practical fallback: try to actually read data. If it succeeds
+  /// (even 0 results), we have real access. Only a SecurityException means
+  /// we truly lack permissions.
   Future<bool> hasPermissions() async {
     try {
-      // Return true if at least STEPS or any other data is accessible
-      // This allows partial data fetching instead of failing everything
+      // Step 1: Try the standard API first
       final hasSteps = await _health.hasPermissions([HealthDataType.STEPS]) ?? false;
       final hasHeart = await _health.hasPermissions([HealthDataType.HEART_RATE]) ?? false;
       
-      debugPrint("Permission status - Steps: $hasSteps, Heart Rate: $hasHeart");
+      debugPrint("Permission status (API) - Steps: $hasSteps, Heart Rate: $hasHeart");
       
-      return hasSteps || hasHeart;
+      if (hasSteps || hasHeart) return true;
+
+      // Step 2: API says false — but on Android 10 this can be wrong.
+      // Try a real data fetch as the ground-truth check.
+      debugPrint("hasPermissions API returned false — trying practical data-read check...");
+      return await _canActuallyReadData();
     } catch (e) {
       debugPrint("hasPermissions check failed: $e");
       return false;
+    }
+  }
+
+  /// Attempt a real data read to verify we have actual access.
+  /// Returns true if the read completes without a SecurityException.
+  Future<bool> _canActuallyReadData() async {
+    try {
+      final now = DateTime.now();
+      final past = now.subtract(const Duration(hours: 1));
+      
+      // A successful call (even with 0 results) means we have permission.
+      // A SecurityException means we don't.
+      await _health.getHealthDataFromTypes(
+        startTime: past,
+        endTime: now,
+        types: [HealthDataType.STEPS],
+      );
+      
+      debugPrint("Practical permission check: SUCCESS (data read succeeded)");
+      return true;
+    } catch (e) {
+      final errorStr = e.toString().toLowerCase();
+      if (errorStr.contains('security') || 
+          errorStr.contains('permission') ||
+          errorStr.contains('unauthorized')) {
+        debugPrint("Practical permission check: FAILED (SecurityException) — $e");
+        return false;
+      }
+      // Other errors (network, timeout, etc.) — assume we have permission
+      // but something else went wrong
+      debugPrint("Practical permission check: AMBIGUOUS error (assuming granted) — $e");
+      return true;
     }
   }
 

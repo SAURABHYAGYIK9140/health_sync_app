@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../../../core/storage/storage_service.dart';
 import '../../../services/auth_service.dart';
 import '../../../core/theme/app_theme.dart';
 
@@ -42,6 +43,9 @@ class SettingsView extends StatelessWidget {
   }
 
   Widget _buildProfileTile() {
+    final authService = Get.find<AuthService>();
+    final _storage = Get.find<StorageService>();
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -60,7 +64,7 @@ class SettingsView extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text("User Name", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              Text("user@example.com", style: TextStyle(color: Colors.black54)),
+              Text(_storage.getUserEmail().toString(), style: TextStyle(color: Colors.black54)),
             ],
           ),
         ],

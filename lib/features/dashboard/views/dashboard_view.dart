@@ -63,9 +63,15 @@ class DashboardView extends GetView<DashboardController> {
             children: [
               _buildGreeting(),
               const SizedBox(height: 24),
-              Obx(() => !controller.hasHealthAccess.value 
-                ? _buildPermissionWarning() 
-                : const SizedBox.shrink()),
+              // Health Connect not installed banner (Android only)
+              Obx(() => !controller.isHealthConnectInstalled.value
+                  ? _buildHealthConnectInstallCard()
+                  : const SizedBox.shrink()),
+              // Permissions warning (shown only when HC is installed but perms missing)
+              Obx(() => controller.isHealthConnectInstalled.value &&
+                      !controller.hasHealthAccess.value
+                  ? _buildPermissionWarning()
+                  : const SizedBox.shrink()),
               const SizedBox(height: 32),
               _buildSyncStatusCard(),
               const SizedBox(height: 32),
@@ -92,6 +98,102 @@ class DashboardView extends GetView<DashboardController> {
         Text(controller.storage.getUserEmail().toString().replaceAll
           ('@gmail.com', ''), style: Get.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold)),
       ],
+    );
+  }
+
+  Widget _buildHealthConnectInstallCard() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            const Color(0xFF1A73E8).withOpacity(0.08),
+            const Color(0xFF4285F4).withOpacity(0.04),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFF1A73E8).withOpacity(0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1A73E8).withOpacity(0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.health_and_safety_rounded,
+                  color: Color(0xFF1A73E8),
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 14),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Health Connect Required",
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF1A73E8),
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      "Install Google's Health Connect to sync your health data.",
+                      style: TextStyle(fontSize: 12, color: Colors.black54),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: controller.promptInstallHealthConnect,
+                  icon: const Icon(Icons.download_rounded, size: 18),
+                  label: const Text("Install Now"),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1A73E8),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                onPressed: controller.recheckHealthConnect,
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: const Text("Re-check"),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF1A73E8),
+                  side: const BorderSide(color: Color(0xFF1A73E8)),
+                  padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -187,16 +289,52 @@ class DashboardView extends GetView<DashboardController> {
             ],
           ),
           const SizedBox(height: 20),
-          Obx(() => ElevatedButton(
-            onPressed: controller.isSyncing.value ? null : controller.syncNow,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.primaryColor,
-              minimumSize: const Size(double.infinity, 50),
-            ),
-            child: controller.isSyncing.value
-                ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                : const Text("Sync Now", style: TextStyle(fontWeight: FontWeight.bold)),
-          )),
+          Obx(() {
+            final canSync = controller.isHealthConnectInstalled.value &&
+                controller.hasHealthAccess.value &&
+                !controller.isSyncing.value;
+            return Column(
+              children: [
+                ElevatedButton(
+                  onPressed: canSync ? controller.syncNow : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primaryColor,
+                    disabledBackgroundColor: Colors.grey.shade200,
+                    minimumSize: const Size(double.infinity, 50),
+                  ),
+                  child: controller.isSyncing.value
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                        )
+                      : Text(
+                          "Sync Now",
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: canSync ? Colors.white : Colors.grey,
+                          ),
+                        ),
+                ),
+                if (!controller.isHealthConnectInstalled.value)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8),
+                    child: Text(
+                      "Install Health Connect to enable sync",
+                      style: TextStyle(fontSize: 12, color: Colors.black45),
+                    ),
+                  )
+                else if (!controller.hasHealthAccess.value)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8),
+                    child: Text(
+                      "Grant health permissions to enable sync",
+                      style: TextStyle(fontSize: 12, color: Colors.black45),
+                    ),
+                  ),
+              ],
+            );
+          }),
         ],
       ),
     );
